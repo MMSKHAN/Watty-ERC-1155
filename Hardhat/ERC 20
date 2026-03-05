@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+contract WTYSettlement20 is ERC20 {
+    error NotAdmin();
+    error NotMinter();
+    error NotAllowed();
+    error ZeroAddress();
+    error ZeroValue();
+    error MeterNotRegistered();
+    error MeterAlreadyRegistered();
+
+    address public admin;
+    mapping(address => bool) public isMinter;
+
+    struct Meter {
+        address owner;
+        bytes32 metadataHash;
+    }
+    mapping(bytes32 => Meter) public meters;
+
+    event MeterRegistered(bytes32 meterId, address owner, bytes32 metadataHash);
+    event EnergyReported(bytes32 meterId, bytes32 intervalId, uint256 whDelta, bytes32 dataHash);
+    event CreditsMinted(bytes32 meterId, address to, uint256 amount, bytes32 ref);
+    event CreditsBurned(address from, uint256 amount, bytes32 ref);
+    event SettlementFinalized(bytes32 siteId, bytes32 period, uint256 totalWh, uint256 totalTokens, bytes32 proofHash);
+
+    constructor(
+        string memory name_,
+        string memory symbol_
+    ) ERC20(name_, symbol_) {
+        admin = msg.sender;
+    }
+
+    modifier onlyAdmin() {
+        if (msg.sender != admin) revert NotAdmin();
+        _;
+    }
+
+    modifier onlyMinter() {
+        if (!isMinter[msg.sender]) revert NotMinter();
+        _;
+    }
+
+    function setMinter(address account, bool value) external onlyAdmin {
+        if (account == address(0)) revert ZeroAddress();
+        isMinter[account] = value;
+    }
+
+    function registerMeter(bytes32 meterId, address owner, bytes32 metadataHash) external onlyAdmin {
+        if (meterId == bytes32(0)) revert ZeroValue();
+        if (owner == address(0)) revert ZeroAddress();
+        if (metadataHash == bytes32(0)) revert ZeroValue();
+
+        if (meters[meterId].owner != address(0)) revert MeterAlreadyRegistered();
+
+        meters[meterId] = Meter({owner: owner, metadataHash: metadataHash});
+        emit MeterRegistered(meterId, owner, metadataHash);
+    }
+
+    function reportEnergy(
+        bytes32 meterId,
+        bytes32 intervalId,
+        uint256 whDelta,
+        bytes32 dataHash
+    ) external onlyMinter {
+        if (meters[meterId].owner == address(0)) revert MeterNotRegistered();
+        if (intervalId == bytes32(0) || dataHash == bytes32(0)) revert ZeroValue();
+        if (whDelta == 0) revert ZeroValue();
+
+        emit EnergyReported(meterId, intervalId, whDelta, dataHash);
+    }
+    function mintCredits(
+        bytes32 meterId,
+        address to,
+        uint256 amount,
+        bytes32 ref
+    ) external onlyMinter {
+        if (meters[meterId].owner == address(0)) revert MeterNotRegistered();
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0 || ref == bytes32(0)) revert ZeroValue();
+
+        _mint(to, amount);
+        emit CreditsMinted(meterId, to, amount, ref);
+    }
+    function burnCredits(
+        address from,
+        uint256 amount,
+        bytes32 ref
+    ) external {
+        if (from == address(0)) revert ZeroAddress();
+        if (amount == 0 || ref == bytes32(0)) revert ZeroValue();
+        if (msg.sender != from && !isMinter[msg.sender]) revert NotAllowed();
+
+        _burn(from, amount);
+        emit CreditsBurned(from, amount, ref);
+    }
+
+    function finalizeSettlement(
+        bytes32 siteId,
+        bytes32 period,
+        uint256 totalWh,
+        uint256 totalTokens,
+        bytes32 proofHash
+    ) external onlyMinter {
+        if (siteId == bytes32(0) || period == bytes32(0) || proofHash == bytes32(0)) revert ZeroValue();
+        if (totalWh == 0 || totalTokens == 0) revert ZeroValue();
+
+        emit SettlementFinalized(siteId, period, totalWh, totalTokens, proofHash);
+    }
+}
